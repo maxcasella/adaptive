@@ -84,8 +84,12 @@ if (LAUNCHED) {
   });
   document.querySelectorAll("[data-prelaunch]").forEach(el => { el.hidden = true; });
 } else {
+  // A page can hold more than one form (the home page has one in the hero and one at the end). They answer the
+  // same list, so once one of them joins, every one shows the joined panel, and "Use a different address" brings
+  // them all back.
+  const all = [];
   document.querySelectorAll("form[data-waitlist]").forEach(form => {
-    const email = form.elements.email, style = form.elements.style, hp = form.elements.website;
+    const email = form.elements.email, style = form.elements.style || null, hp = form.elements.website;
     const msg = form.querySelector("[data-msg]"), btn = form.querySelector("button[type=submit]");
     const box = form.closest("[data-join]");
     const joined = box.querySelector("[data-joined]");
@@ -93,18 +97,23 @@ if (LAUNCHED) {
     // The waitlist page's own h1 says "Join the waitlist."; once you join it says what the joined heading says.
     const pageTitle = box.hasAttribute("data-solo") ? document.querySelector("main h1") : null;
     const pageTitleText = pageTitle ? pageTitle.textContent : "";
-    const showJoined = on => {
+    const showJoined = (on, address) => {
+      if (on) joined.querySelector("[data-joined-email]").textContent = address;
       form.hidden = on; joined.hidden = !on;
-      box.querySelectorAll(".join-head, .join-close").forEach(el => { el.hidden = on; });
+      box.querySelectorAll(".join-head").forEach(el => { el.hidden = on; });
       document.querySelectorAll(".bar .pill-cta").forEach(el => { el.hidden = on; }); // nothing left to join
       if (pageTitle) { pageTitle.textContent = on ? heading.textContent : pageTitleText; heading.hidden = on; }
     };
+    // ?style= picks a style in a form that asks for one (the old style pages forward here with it).
     const qs = word(new URLSearchParams(location.search).get("style"));
-    if (qs && STYLES.includes(qs) && !style.value) style.value = qs;
+    const preselect = () => { if (style && qs && STYLES.includes(qs) && !style.value) style.value = qs; };
+    preselect();
     let busy = false;
     btn.disabled = false; // the button ships disabled so nothing can post before this script is ready
     const say = (text, kind) => { msg.textContent = text || ""; msg.dataset.kind = kind || ""; };
     const markEmail = bad => bad ? email.setAttribute("aria-invalid", "true") : email.removeAttribute("aria-invalid");
+    const reset = () => { form.reset(); say(""); markEmail(false); preselect(); showJoined(false); };
+    all.push({ showJoined, reset });
 
     form.addEventListener("submit", async ev => {
       ev.preventDefault();
@@ -113,7 +122,7 @@ if (LAUNCHED) {
       if (problem) { say(problem, "error"); markEmail(true); email.focus(); return; }
       markEmail(false); say("");
       const body = { email: email.value.trim(), source: source(), website: hp.value };
-      if (style.value) body.style = style.value;
+      if (style && style.value) body.style = style.value;
       busy = true; btn.disabled = true; btn.textContent = "Joining"; form.setAttribute("aria-busy", "true");
       const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 15000);
       let res = null, data = null;
@@ -126,8 +135,9 @@ if (LAUNCHED) {
       busy = false; btn.disabled = false; btn.textContent = "Join the waitlist"; form.removeAttribute("aria-busy");
       const err = data && typeof data.error === "string" ? data.error : "";
       if (res && res.ok) {
-        joined.querySelector("[data-joined-email]").textContent = email.value.trim();
-        showJoined(true); (pageTitle || heading).focus();
+        const address = email.value.trim();
+        all.forEach(f => f.showJoined(true, address));
+        (pageTitle || heading).focus();
       } else if (res && res.status === 422) {
         say(err || SAY.bad, "error");
         if (!err || err === SAY.empty || err === SAY.bad) { markEmail(true); email.focus(); }
@@ -139,9 +149,8 @@ if (LAUNCHED) {
     });
 
     joined.querySelector("[data-again]").addEventListener("click", () => {
-      form.reset(); say(""); markEmail(false);
-      if (qs && STYLES.includes(qs) && !style.value) style.value = qs;
-      showJoined(false); email.focus();
+      all.forEach(f => f.reset());
+      email.focus();
     });
   });
 }
